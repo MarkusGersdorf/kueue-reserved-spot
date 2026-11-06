@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------------------
+# "Jobs can allocate all GPUs at night" - part 2: change the POLICY at night.
+#
+# The default config lets batch borrow all 8 GPUs around the clock, which means
+# a model spinning up at 14:00 has to wait for an eviction (a few seconds, but
+# not zero).
+#
+# This optional overlay makes that trade-off explicit and time-dependent by
+# flipping serving-cq's lendingLimit:
+#
+#   daytime (08:00) lendingLimit: 4  -> 4 GPUs are NEVER lent out, so the first
+#                                      4 GPUs of model capacity are instant;
+#                                      batch is capped at 4 borrowed GPUs.
+#   nighttime (22:00) lendingLimit: 8 -> the whole pool is lendable, batch can
+#                                      take all 8, models accept the eviction
+#                                      latency.
+#
+# lendingLimit is the "how much of my guarantee am I willing to lend" knob;
+# borrowingLimit on the batch side is the "how much may I take" knob. Both are
+# per (flavor, resource).
+#
+# Apply with: oc apply -f cluster-config/optional/night-mode.yaml
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kueue-quota-scheduler
+  namespace: ai-serving
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kueue-quota-scheduler
+rules:
+  - apiGroups: ["kueue.x-k8s.io"]
+    resources: ["clusterqueues"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kueue-quota-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: kueue-quota-scheduler
+    namespace: ai-serving
+roleRef:
+  kind: ClusterRole
+  name: kueue-quota-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gpu-night-mode
+  namespace: ai-serving
+spec:
+  schedule: "0 22 * * *"
+  timeZone: "Europe/Berlin"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          serviceAccountName: kueue-quota-scheduler
+          restartPolicy: OnFailure
+          containers:
+            - name: oc
+              image: registry.redhat.io/openshift4/ose-cli:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "night mode: serving-cq lends its full GPU quota"
+                  oc patch clusterqueue serving-cq --type=json -p='[
+                    {"op":"add",
+                     "path":"/spec/resourceGroups/0/flavors/0/resources/0/lendingLimit",
+                     "value":"8"}
+                  ]'
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gpu-day-mode
+  namespace: ai-serving
+spec:
+  schedule: "0 8 * * *"
+  timeZone: "Europe/Berlin"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          serviceAccountName: kueue-quota-scheduler
+          restartPolicy: OnFailure
+          containers:
+            - name: oc
+              image: registry.redhat.io/openshift4/ose-cli:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  echo "day mode: serving-cq holds 4 GPUs back for instant model starts"
+                  oc patch clusterqueue serving-cq --type=json -p='[
+                    {"op":"add",
+                     "path":"/spec/resourceGroups/0/flavors/0/resources/0/lendingLimit",
+                     "value":"4"}
+                  ]'

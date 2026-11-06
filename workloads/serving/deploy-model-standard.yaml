@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# A canary / staging model: 2 replicas x 2 GPUs = 2 Workloads of 2 GPUs each.
+#
+# Priority model-standard, so it outranks all batch work but yields to
+# llama31-8b (model-critical) when the pool is genuinely full.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mistral7b-canary
+  namespace: ai-serving
+  labels:
+    demo.kueue.io/tier: serving
+    demo.kueue.io/model: mistral7b-canary
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mistral7b-canary
+  template:
+    metadata:
+      labels:
+        app: mistral7b-canary
+        kueue.x-k8s.io/queue-name: serving-lq
+        kueue.x-k8s.io/priority-class: model-standard
+        demo.kueue.io/tier: serving
+        demo.kueue.io/model: mistral7b-canary
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: server
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "[$(date -Is)] loading mistral-7b canary onto 2 GPUs..."
+              sleep 5
+              echo "[$(date -Is)] model ready, serving on :8000"
+              while true; do sleep 30; echo "[$(date -Is)] healthy"; done
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+              nvidia.com/gpu: "2"
+            limits:
+              cpu: "2"
+              memory: 1Gi
+              nvidia.com/gpu: "2"

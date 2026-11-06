@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# Who may do what.
+#
+# Red Hat build of Kueue ships two aggregated ClusterRoles:
+#
+#   kueue-batch-admin-role  aggregates everything labelled
+#                           rbac.kueue.x-k8s.io/batch-admin=true
+#                           -> manage ResourceFlavors, ClusterQueues,
+#                              LocalQueues, Workloads, priority classes
+#   kueue-batch-user-role   aggregates everything labelled
+#                           rbac.kueue.x-k8s.io/batch-user=true
+#                           -> submit Jobs and read your own Workloads
+#
+# The split that matters for this demo: application teams must NOT be able to
+# edit ClusterQueues or WorkloadPriorityClasses, otherwise the batch team can
+# simply relabel its jobs as model-critical and the guarantee evaporates.
+# ---------------------------------------------------------------------------
+
+# Platform / GPU capacity owners.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kueue-capacity-admins
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: gpu-platform-admins      # <-- replace with your group
+roleRef:
+  kind: ClusterRole
+  name: kueue-batch-admin-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# The serving team may submit to ai-serving only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kueue-batch-users
+  namespace: ai-serving
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: ai-serving-team          # <-- replace with your group
+roleRef:
+  kind: ClusterRole
+  name: kueue-batch-user-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# The batch/science team may submit to ai-batch only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kueue-batch-users
+  namespace: ai-batch
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: ai-batch-team            # <-- replace with your group
+roleRef:
+  kind: ClusterRole
+  name: kueue-batch-user-role
+  apiGroup: rbac.authorization.k8s.io

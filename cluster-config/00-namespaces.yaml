@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Demo namespaces.
+#
+# IMPORTANT: Red Hat build of Kueue hardcodes
+#   managedJobsNamespaceSelector: matchLabels{ kueue.openshift.io/managed: "true" }
+#
+# Without that label the Kueue admission webhooks are not applied to the
+# namespace, so Jobs/Pods are never suspended and nothing is ever queued.
+# This is the single most common reason a Kueue demo "does nothing".
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-serving
+  labels:
+    kueue.openshift.io/managed: "true"
+    demo.kueue.io/tier: serving
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-batch
+  labels:
+    kueue.openshift.io/managed: "true"
+    demo.kueue.io/tier: batch

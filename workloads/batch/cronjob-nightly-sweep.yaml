@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# "Jobs can allocate all GPUs at night" - part 1: submit the work at night.
+#
+# A CronJob whose jobTemplate carries the Kueue labels. The Jobs it creates are
+# ordinary Kueue Workloads: they queue, borrow whatever GPUs are idle, and get
+# evicted the moment a model needs the capacity back.
+#
+# Note: labels go on spec.jobTemplate.metadata, NOT on the CronJob itself -
+# Kueue's BatchJob integration looks at the Job.
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-sweep
+  namespace: ai-batch
+spec:
+  schedule: "0 22 * * *"
+  timeZone: "Europe/Berlin"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: batch-lq
+        kueue.x-k8s.io/priority-class: batch-nightly
+        kueue.x-k8s.io/max-exec-time-seconds: "28800"   # 8h budget
+        demo.kueue.io/tier: batch
+    spec:
+      parallelism: 4
+      completions: 4
+      backoffLimit: 20
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            demo.kueue.io/tier: batch
+        spec:
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 10
+          containers:
+            - name: trainer
+              image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  trap 'echo "preempted - checkpointing"; sleep 2; exit 143' TERM
+                  echo "[$(date -Is)] nightly sweep shard starting"
+                  while true; do sleep 60 & wait $!; echo "[$(date -Is)] working"; done
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                  nvidia.com/gpu: "1"
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+                  nvidia.com/gpu: "1"

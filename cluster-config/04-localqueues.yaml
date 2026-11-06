@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# LocalQueues are the namespaced handle users actually reference via the
+# kueue.x-k8s.io/queue-name label. They map 1:1 onto a ClusterQueue.
+# ---------------------------------------------------------------------------
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: serving-lq
+  namespace: ai-serving
+spec:
+  clusterQueue: serving-cq
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: batch-lq
+  namespace: ai-batch
+spec:
+  clusterQueue: batch-cq

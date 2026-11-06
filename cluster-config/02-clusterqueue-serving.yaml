@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# serving-cq — the OWNER of the GPUs.
+#
+# It holds the nominal quota for the entire GPU pool. Because it owns the
+# quota, a pending model server always "fits within its nominal quota", which
+# is the precondition for classical reclaim preemption. That is what lets a
+# model evict borrowers on demand.
+# ---------------------------------------------------------------------------
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: serving-cq
+  labels:
+    demo.kueue.io/tier: serving
+spec:
+  # Both queues share one cohort, so unused serving quota can be lent to batch.
+  # (v1beta1 called this field `cohort`; v1beta2 renamed it to `cohortName`.)
+  cohortName: gpu-cluster
+
+  # namespaceSelector defaults to null, which means NO namespace may use the
+  # queue. `{}` = every namespace. To lock the serving queue down to the
+  # serving namespaces instead, use:
+  #
+  #   namespaceSelector:
+  #     matchLabels:
+  #       demo.kueue.io/tier: serving
+  namespaceSelector: {}
+
+  # StrictFIFO sorts by WorkloadPriorityClass value, then by creation time, and
+  # only ever considers the head of the queue. For model serving that is the
+  # behaviour you want: a model-critical replica can never be overtaken by a
+  # model-standard one, even if the standard one happens to fit.
+  # Trade-off: a 4-GPU model at the head blocks a 1-GPU model behind it.
+  queueingStrategy: StrictFIFO
+
+  flavorFungibility:
+    # With several flavors, MayStopSearch means "if preempting here gets me
+    # admitted, do it, don't keep shopping for a flavor with free capacity".
+    # That minimises model cold-start latency at the cost of more evictions.
+    whenCanBorrow: MayStopSearch
+    whenCanPreempt: MayStopSearch
+
+  preemption:
+    # THE KEY SETTING.
+    # `Any` = when a model needs quota that serving-cq nominally owns but has
+    # lent out, preempt whatever is using it, regardless of the borrower's
+    # priority. This is what makes "job dies the moment a model spins up" true
+    # without having to coordinate priority values across teams.
+    #
+    # Use `LowerPriority` instead if you want borrowers above a certain
+    # priority to be protected from reclamation.
+    reclaimWithinCohort: Any
+
+    # Inside serving-cq itself: a higher-priority model may evict a
+    # lower-priority model when the pool is genuinely full.
+    # LowerOrNewerEqualPriority would additionally let an older model evict an
+    # equal-priority newer one.
+    withinClusterQueue: LowerPriority
+
+    # Not needed here: serving-cq owns 100% of the pool, so it never has to
+    # borrow. Set this if serving-cq's nominal quota is smaller than the pool:
+    #
+    # borrowWithinCohort:
+    #   policy: LowerPriority
+    #   maxPriorityThreshold: 1000
+
+  resourceGroups:
+    # Every resource a pod requests must be covered by a resource group,
+    # otherwise the Workload is rejected with
+    #   "resource <name> unavailable in ClusterQueue"
+    # That is why cpu and memory are listed next to the GPUs.
+    - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+      flavors:
+        - name: gpu-default
+          resources:
+            - name: nvidia.com/gpu
+              nominalQuota: 8        # <-- the whole GPU pool lives here
+              # lendingLimit: 6      # see docs/03-tuning.md: keep 2 GPUs
+              #                      # permanently un-lendable so the first
+              #                      # model starts with zero eviction wait.
+            - name: cpu
+              nominalQuota: 32
+            - name: memory
+              nominalQuota: 128Gi

@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# A single-GPU nightly sweep job. Submit it N times to fill the pool:
+#
+#     for i in $(seq 1 8); do oc create -f workloads/batch/job-nightly-sweep.yaml; done
+#
+# (oc create, not oc apply - the manifest uses generateName.)
+#
+# One Job of 1 GPU = one Workload of 1 GPU. Deliberately fine-grained: when a
+# model needs 2 GPUs, Kueue evicts exactly 2 of these. Compare with
+# job-bulk-eval.yaml, where a 4-GPU Workload is all-or-nothing and eviction is
+# correspondingly blunt.
+#
+# For the "it must be restartable" part of the story: this job writes its
+# progress to stdout and traps SIGTERM, which is where a real trainer would
+# flush a checkpoint.
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: nightly-sweep-
+  namespace: ai-batch
+  labels:
+    kueue.x-k8s.io/queue-name: batch-lq
+    kueue.x-k8s.io/priority-class: batch-nightly
+    demo.kueue.io/tier: batch
+spec:
+  # Preemption suspends the Job and deletes its pods. Keep headroom here so a
+  # job that is evicted a few times still completes once capacity returns.
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        demo.kueue.io/tier: batch
+    spec:
+      restartPolicy: Never
+      # Short grace period => the GPU is handed back to the model server fast.
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: trainer
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              DURATION=${DURATION:-1200}
+              trap 'echo "[$(date -Is)] SIGTERM: preempted at step $STEP - flushing checkpoint"; sleep 2; exit 143' TERM
+              echo "[$(date -Is)] sweep starting, budget ${DURATION}s on 1 GPU"
+              STEP=0
+              while [ "$STEP" -lt "$DURATION" ]; do
+                STEP=$((STEP + 10))
+                sleep 10 &
+                wait $!
+                echo "[$(date -Is)] step $STEP/${DURATION}"
+              done
+              echo "[$(date -Is)] sweep complete"
+          env:
+            - name: DURATION
+              value: "1200"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              nvidia.com/gpu: "1"

@@ -1,0 +1,79 @@
+# ---------------------------------------------------------------------------
+# The same Workload shape, but with a real vLLM server. Use this on a cluster
+# that has actual GPUs (NVIDIA GPU Operator installed, nvidia.com/gpu
+# advertised by the device plugin).
+#
+# Everything Kueue cares about is identical to deploy-model-critical.yaml:
+#   * kueue.x-k8s.io/queue-name on the pod template
+#   * kueue.x-k8s.io/priority-class on the pod template
+#   * nvidia.com/gpu in requests/limits
+#
+# NOT applied by scripts/demo.sh.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama31-8b-vllm
+  namespace: ai-serving
+  labels:
+    demo.kueue.io/tier: serving
+    demo.kueue.io/model: llama31-8b-vllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llama31-8b-vllm
+  template:
+    metadata:
+      labels:
+        app: llama31-8b-vllm
+        kueue.x-k8s.io/queue-name: serving-lq
+        kueue.x-k8s.io/priority-class: model-critical
+        demo.kueue.io/tier: serving
+        demo.kueue.io/model: llama31-8b-vllm
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: vllm
+          # Red Hat AI Inference Server, or quay.io/vllm/vllm-openai
+          image: registry.redhat.io/rhaiis/vllm-cuda-rhel9:3.2.1
+          args:
+            - --model=RedHatAI/Llama-3.1-8B-Instruct
+            - --tensor-parallel-size=2
+            - --max-model-len=8192
+            - --port=8000
+          env:
+            - name: HF_HOME
+              value: /cache
+          ports:
+            - containerPort: 8000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: "2"
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: "2"
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: model-cache      # create this yourself
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi

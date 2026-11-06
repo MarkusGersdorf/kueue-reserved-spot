@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# A production model server: long-running, high priority, must never wait.
+#
+# Kueue's Deployment integration manages each replica Pod as its own
+# single-pod Workload. So this Deployment produces 1 Workload of 2 GPUs.
+# Scale to 3 replicas and you get 3 independent 2-GPU Workloads, each of which
+# can reclaim capacity from batch on its own.
+#
+# The queue-name and priority-class labels MUST sit on the POD TEMPLATE, not
+# on the Deployment - the pod is the thing Kueue admits.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama31-8b
+  namespace: ai-serving
+  labels:
+    demo.kueue.io/tier: serving
+    demo.kueue.io/model: llama31-8b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llama31-8b
+  template:
+    metadata:
+      labels:
+        app: llama31-8b
+        kueue.x-k8s.io/queue-name: serving-lq
+        kueue.x-k8s.io/priority-class: model-critical
+        demo.kueue.io/tier: serving
+        demo.kueue.io/model: llama31-8b
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: server
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          # Stand-in for vLLM. See deploy-model-vllm-real.yaml for the real
+          # thing on a cluster with actual GPUs.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "[$(date -Is)] loading llama-3.1-8b-instruct onto 2 GPUs..."
+              sleep 5
+              echo "[$(date -Is)] model ready, serving on :8000"
+              while true; do sleep 30; echo "[$(date -Is)] healthy"; done
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+              nvidia.com/gpu: "2"
+            limits:
+              cpu: "2"
+              memory: 1Gi
+              nvidia.com/gpu: "2"

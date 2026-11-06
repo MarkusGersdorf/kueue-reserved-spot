@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------------------
+# The Kueue singleton CR. The operator renders this into the upstream Kueue
+# controller configuration and rolls out the controller-manager.
+#
+# The CR is CLUSTER SCOPED and must be named "cluster".
+# API: kueue.openshift.io/v1
+# ---------------------------------------------------------------------------
+apiVersion: kueue.openshift.io/v1
+kind: Kueue
+metadata:
+  name: cluster
+spec:
+  managementState: Managed
+  config:
+    integrations:
+      # Only enable frameworks whose CRDs actually exist on the cluster.
+      # BatchJob / Pod / Deployment / StatefulSet are always available.
+      #
+      # This demo needs:
+      #   BatchJob   -> the short-running training / eval / sweep jobs
+      #   Deployment -> the model servers (one Workload per replica Pod)
+      #   Pod        -> underpins the Deployment and StatefulSet integrations
+      frameworks:
+        - BatchJob
+        - Pod
+        - Deployment
+        - StatefulSet
+        # Uncomment only if the matching CRD is installed, otherwise the
+        # Kueue controller-manager will not come up:
+        # - JobSet            # requires the JobSet CRD
+        # - RayJob            # requires KubeRay
+        # - RayCluster        # requires KubeRay
+        # - RayService        # requires KubeRay
+        # - PyTorchJob        # requires Kubeflow Training Operator
+        # - TrainJob          # requires Kubeflow Trainer v2
+        # - MPIJob
+        # - AppWrapper
+        # - LeaderWorkerSet
+        # - SparkApplication
+
+      # Copy these labels from the Job/Pod onto the generated Workload object so
+      # you can filter Workloads by team / model in the demo.
+      labelKeysToCopy:
+        - key: demo.kueue.io/tier
+        - key: demo.kueue.io/model
+
+    workloadManagement:
+      # QueueName (the default): Kueue only touches objects that carry the
+      #   kueue.x-k8s.io/queue-name label. Everything else runs unqueued.
+      #   This is what you want on a shared cluster - nothing is suspended by
+      #   surprise.
+      # None: every supported object in a managed namespace is suspended on
+      #   creation and gets a queue-name injected by the mutating webhook.
+      labelPolicy: QueueName
+
+    preemption:
+      # Classical preemption is what makes the "reserved spot" pattern in
+      # cluster-config/ work: a Workload that fits inside its own
+      # ClusterQueue's nominal quota may reclaim that quota from borrowers.
+      #
+      # Switch to FairSharing only if you want proportional sharing between
+      # many tenants instead of strict "serving always wins". Note that
+      # borrowWithinCohort is NOT supported with FairSharing.
+      preemptionPolicy: Classical
+
+    gangScheduling:
+      # ByWorkloadDefaults = all-or-nothing admission per Workload with the
+      # operator's default timeouts. Good enough for the demo and it cannot
+      # evict a slow-starting pod out from under you.
+      policy: ByWorkloadDefaults
+      #
+      # For production multi-GPU training, pin the timeouts explicitly:
+      #
+      # policy: ByWorkload
+      # byWorkload:
+      #   admission: Sequential          # avoid two big jobs deadlocking
+      #   timeoutSeconds: 600            # pods must all be Ready within 10m
+      #   recoveryTimeoutSeconds: 180    # grace for a failed pod to be replaced
+      #   requeuingStrategy:
+      #     timeReference: Eviction
+      #     backoffBaseSeconds: 60
+      #     backoffMaxSeconds: 600
+      #     retryLimit: 10

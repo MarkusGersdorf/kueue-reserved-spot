@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------------------
+# A ResourceFlavor describes one *kind* of capacity. Quota is always tracked
+# per (flavor, resource) pair.
+#
+# The demo uses a single flavor so the preemption story stays readable. See
+# docs/03-tuning.md for the multi-flavor variant (A100 reserved for serving,
+# L40S shared with batch).
+#
+# An empty spec matches every node, which is what you want when running the
+# demo with simulated GPUs (scripts/fake-gpus.sh).
+#
+# On a real GPU cluster, pin the flavor to the GPU machine set and let Kueue
+# inject the toleration for you:
+#
+#   spec:
+#     nodeLabels:
+#       nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+#     nodeTaints:
+#       - key: nvidia.com/gpu
+#         value: "true"
+#         effect: NoSchedule
+#     tolerations:
+#       - key: nvidia.com/gpu
+#         operator: Equal
+#         value: "true"
+#         effect: NoSchedule
+# ---------------------------------------------------------------------------
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: gpu-default
+spec: {}

@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------------------
+# batch-cq — the BORROWER ("reserved spot" capacity).
+#
+# nominalQuota 0 + borrowingLimit = whole pool means:
+#   * batch can soak up every idle GPU (the "all GPUs at night" case), and
+#   * every batch Workload is, by definition, borrowing - so every batch
+#     Workload is a legal preemption target for serving-cq's
+#     reclaimWithinCohort: Any.
+#
+# This is the EC2-spot-instance model expressed in Kueue: free capacity,
+# no guarantees, evicted without notice.
+# ---------------------------------------------------------------------------
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: batch-cq
+  labels:
+    demo.kueue.io/tier: batch
+spec:
+  cohortName: gpu-cluster
+  namespaceSelector: {}
+
+  # BestEffortFIFO: a 4-GPU sweep job that cannot fit must not block the ten
+  # 1-GPU jobs queued behind it. For opportunistic batch, throughput beats
+  # strict ordering.
+  queueingStrategy: BestEffortFIFO
+
+  preemption:
+    # batch-cq owns nothing, so it has nothing to reclaim. Keeping this at
+    # Never also guarantees batch can never evict a model server.
+    reclaimWithinCohort: Never
+
+    # Because nominalQuota is 0, *every* pending batch Workload is "outside its
+    # nominal quota", so withinClusterQueue preemption is always in play:
+    # an interactive fine-tune (batch-interactive) will evict nightly sweep
+    # jobs (batch-nightly) rather than queue behind them.
+    withinClusterQueue: LowerPriority
+
+  resourceGroups:
+    - coveredResources: ["nvidia.com/gpu", "cpu", "memory"]
+      flavors:
+        - name: gpu-default
+          resources:
+            - name: nvidia.com/gpu
+              nominalQuota: 0        # owns nothing...
+              borrowingLimit: 8      # ...but may borrow the entire pool
+            - name: cpu
+              nominalQuota: 0
+              borrowingLimit: 32
+            - name: memory
+              nominalQuota: 0
+              borrowingLimit: 128Gi

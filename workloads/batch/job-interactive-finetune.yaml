@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# An interactive fine-tune: 2 GPUs, batch-interactive priority.
+#
+# Still borrowed capacity - serving can still evict it - but inside batch-cq it
+# outranks the nightly sweeps and will evict them (withinClusterQueue:
+# LowerPriority on batch-cq) instead of waiting for them to drain.
+#
+# Submit with: oc create -f workloads/batch/job-interactive-finetune.yaml
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: interactive-finetune-
+  namespace: ai-batch
+  labels:
+    kueue.x-k8s.io/queue-name: batch-lq
+    kueue.x-k8s.io/priority-class: batch-interactive
+    kueue.x-k8s.io/max-exec-time-seconds: "1800"
+    demo.kueue.io/tier: batch
+spec:
+  parallelism: 2
+  completions: 2
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        demo.kueue.io/tier: batch
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: finetune
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              DURATION=${DURATION:-600}
+              trap 'echo "[$(date -Is)] SIGTERM: preempted - saving LoRA adapter"; sleep 2; exit 143' TERM
+              echo "[$(date -Is)] interactive fine-tune starting on 1 GPU"
+              STEP=0
+              while [ "$STEP" -lt "$DURATION" ]; do
+                STEP=$((STEP + 10))
+                sleep 10 &
+                wait $!
+                echo "[$(date -Is)] epoch step $STEP/${DURATION}"
+              done
+          env:
+            - name: DURATION
+              value: "600"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              nvidia.com/gpu: "1"

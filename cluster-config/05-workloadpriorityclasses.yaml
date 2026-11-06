@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# WorkloadPriorityClass drives Kueue's *queue ordering* and *preemption*
+# decisions. It is deliberately separate from the Kubernetes
+# scheduling.k8s.io PriorityClass, which drives kube-scheduler pod eviction.
+#
+# Referenced from a Job / Pod template with:
+#     kueue.x-k8s.io/priority-class: <name>
+#
+# Note the schema: `value` and `description` are TOP-LEVEL, there is no spec.
+# ---------------------------------------------------------------------------
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: model-critical
+value: 1000000
+description: >-
+  Production model servers. Admitted ahead of everything else and may evict any
+  other workload in the cohort, including other models.
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: model-standard
+value: 100000
+description: >-
+  Staging / canary model servers. Reclaims GPUs from batch, but yields to
+  model-critical.
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: batch-interactive
+value: 1000
+description: >-
+  Someone is waiting at a notebook. Jumps the queue ahead of nightly sweeps and
+  may evict them, but is still spot capacity from serving's point of view.
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: batch-nightly
+value: 100
+description: >-
+  Bulk overnight work. Lowest priority, first to be evicted, expected to be
+  restartable.

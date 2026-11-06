@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# Red Hat build of Kueue 1.5 — operator installation
+#
+#   Operator package : kueue-operator
+#   Channel          : stable-v1.5
+#   CSV              : kueue-operator.v1.5.1
+#   Upstream Kueue   : v0.19.x  (API group kueue.x-k8s.io, version v1beta2)
+#
+# Apply with:  oc apply -f install/01-operator.yaml
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-kueue-operator
+  labels:
+    openshift.io/cluster-monitoring: "true"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-kueue-operator
+  namespace: openshift-kueue-operator
+spec:
+  # Red Hat build of Kueue is a cluster-scoped operator: leave targetNamespaces
+  # empty so the OperatorGroup watches all namespaces.
+  upgradeStrategy: Default
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: kueue-operator
+  namespace: openshift-kueue-operator
+spec:
+  name: kueue-operator
+  channel: stable-v1.5
+  installPlanApproval: Automatic
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  # Pin the demo to a known-good build. Remove startingCSV to always take the
+  # newest bundle in the channel.
+  startingCSV: kueue-operator.v1.5.1

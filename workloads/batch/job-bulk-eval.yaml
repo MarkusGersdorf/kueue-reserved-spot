@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# A 4-GPU bulk evaluation job - the "gang scheduled" case.
+#
+# This is ONE Workload requesting 4 GPUs across 4 pods (parallelism 4). Kueue
+# admits it all-or-nothing, and preempts it all-or-nothing: a model needing a
+# single GPU takes out all 4 pods. That granularity cost is the main reason to
+# keep opportunistic batch work small.
+#
+# kueue.x-k8s.io/max-exec-time-seconds caps how long the Workload may stay
+# admitted (counted across admissions, excluding time spent suspended). When
+# the budget is spent, Kueue deactivates the Workload instead of letting it
+# squat on GPUs forever - the enforcement half of "short-running jobs".
+#
+# Submit with: oc create -f workloads/batch/job-bulk-eval.yaml
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: bulk-eval-
+  namespace: ai-batch
+  labels:
+    kueue.x-k8s.io/queue-name: batch-lq
+    kueue.x-k8s.io/priority-class: batch-nightly
+    kueue.x-k8s.io/max-exec-time-seconds: "3600"
+    demo.kueue.io/tier: batch
+spec:
+  parallelism: 4
+  completions: 4
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        demo.kueue.io/tier: batch
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: evaluator
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              DURATION=${DURATION:-1800}
+              trap 'echo "[$(date -Is)] SIGTERM: gang preempted - discarding shard"; sleep 2; exit 143' TERM
+              echo "[$(date -Is)] eval shard starting on 1 GPU (gang of 4)"
+              STEP=0
+              while [ "$STEP" -lt "$DURATION" ]; do
+                STEP=$((STEP + 15))
+                sleep 15 &
+                wait $!
+                echo "[$(date -Is)] shard $STEP/${DURATION}"
+              done
+          env:
+            - name: DURATION
+              value: "1800"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "1"
+              memory: 512Mi
+              nvidia.com/gpu: "1"
